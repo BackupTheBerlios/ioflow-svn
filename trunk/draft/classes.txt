@@ -1,0 +1,146 @@
+
+== Class implementation draft ==
+
+== ChangeLog ==
+2008-10-12	^Rooker	(rooker@das-werkstatt.com)
+	* removed "protocol" entity, since it will be done using widgets.
+
+2008-10-12	^Rooker	(rooker@das-werkstatt.com)
+	* renamed "device" to "hardware"
+	* renamed "application" to "software"
+
+2008-10-10	^Rooker	(rooker@das-werkstatt.com)
+	* started class draft.
+
+
+=== TPadFilter ===
+properties:
+ - name		: string		# name handle for pad
+ - label	: string		# human readable name of filter
+ - in		: variant		# input
+ - out		: variant		# output
+ - old		: array of variant	# previous value. useful for differential filters.
+
+
+	=== (TPadFilter)TGate ===
+	# Blocks values outside a given range
+	properties:
+	- min		:
+	- max		:
+	- type		: [lowpass|midpass|highpass]
+
+
+
+
+=== TPad ===
+properties:
+ - name		: string		# name handle for pad
+ - label	: string		# human readable name of pad (useful for labeling "pins")
+ - value	: variant		# current value of data in pad
+ - offset	: numeric		# +/- offset to add to the value before sending
+ - pads		: array of TPad		# existing connections
+ - inputs	: array of TPad		# connections to listen to (filled once at runtime from "self.pads")
+ - outputs	: array of TPad		# connections to send to (filled once at runtime from "self.pads")
+ - flow		: [in|out|duplex] 	# data flow of pad: "sink|source|both"
+ - type		: numeric|string|xxx 	# type 
+ - keep alive	: numeric		# interval between re-sending of value (in msec)
+ - ramping	: numeric		# time delay between 2 values (in msec)
+ - calibration	: bool			# auto calibration on/off
+ - filter	: array of TPadFilter	# 
+ - min		: numeric		# lower range limit
+ - max		: numeric		# upper range limit
+ - precision	: numeric		# number of digits after the comma. for floats.
+
+methods:
+ - send()				#
+ - recv()				#
+ - bang()				# trigger re-sending of previous values
+
+
+
+=== TElement ===
+Notes:
+ - "value" is stored in pad(s).
+ - type (input/output) is determined by pad(s).
+
+properties:
+ - name		: string		# name handle for element
+ - label	: string		# human readable name
+ - pads		: array of TPad		# type "in/out" is defined by pad itself.
+
+
+	=== (TElement)TButton ===
+	properties (inherited from TElement):
+	- name		# e.g. "start", "btn1"
+	- label		# e.g. "Start button", "Button 1"
+	- pads		# pads(pins) this button has. 
+	
+	
+	=== (TElement)TPixel ===
+	properties (inherited from TElement):
+	- name		# 
+	- label		# 
+	- value		# color value (24bit: #RRGGBB)
+	- pads		# pads(pins) this pixel/led has
+	
+	
+	=== (TElement)TFader ===
+	properties (inherited from TElement):
+	- name		#
+	- label		# 
+	- value		#
+	- pads		#
+
+
+
+=== TWidget ===
+properties:
+ - name		: string		# name handle for widget
+ - label	: string		# human readable name of widget
+ - pads		: array of TPad		# input/output pins
+
+
+
+
+=== TElementGroup ===
+properties:
+ - name		: string
+ - label	: string
+ - elements	: array of TElement
+
+
+
+=== THardware ===
+properties:
+ - name		: string			# name handle
+ - label	: string			# human readable name of hardware
+ - elements	: array of TElement		# elements gear consists of
+ - groups	: array of TElementGroup	# Grouping elements for massive assignments and/or better overview of elements
+ - settings	: dictionary			# contains name/value pairs for device-specific settings
+
+methods:
+ - getElementsByType(): array of TElement	# returns an array of elements of a given type (e.g. TButton)
+ - getElementsByGroup(): array of TElement	# returns elements within a given group
+
+
+
+
+=== TSoftware ===
+ - name		: string			# name handle
+ - label	: string			# human readable name of software application
+ - settings	: dictionary			# contains software-wide values (used for configuration & settings)
+
+
+=== TProtocol ===
+
+
+
+
+
+
+
+
+
+
+
+
