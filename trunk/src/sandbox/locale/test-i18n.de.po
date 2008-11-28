@@ -1,0 +1,23 @@
+# translation of test-i18n.po to German
+# ioflow i18n testfile 1
+# Copyright (C) Peter Bubestinger and ioflow contributors.
+# This file is distributed under the same license as the ioflow package.
+# Peter Bubestinger <pb@das-werkstatt.com>, 2008
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: test-i18n\n"
+"Report-Msgid-Bugs-To: pb@das-werkstatt.com\n"
+"POT-Creation-Date: 2008-11-26 10:33+0100\n"
+"PO-Revision-Date: 2008-11-26 10:50+0100\n"
+"Last-Translator: PB <pb@das-werkstatt.com>\n"
+"Language-Team: Austrian\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"X-Generator: KBabel 1.11.4\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+#: ../test-i18n.py:3
+msgid "Greetings"
+msgstr "de_AT"

@@ -1,4 +1,4 @@
- """ Copyright 2008, Peter Bubestinger
+ """ Copyright 2008, Peter Bubestinger and ioflow contributors.
      This file is part of ioflow
 
      Ioflow is free software: you can redistribute it and/or modify
