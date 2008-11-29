@@ -15,3 +15,8 @@
      You should have received a copy of the GNU General Public License
      along with Ioflow.  If not, see <http://www.gnu.org/licenses/>.
 """
+import gettext
+
+gettext.install('test-i18n', './locale', unicode=True)
+print _("Greetings")
+
