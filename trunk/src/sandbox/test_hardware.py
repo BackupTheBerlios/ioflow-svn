@@ -38,20 +38,23 @@ class IOF_WdRadioBtnGroup(ioflow.TWidget):
         ioflow.TWidget.__init__(self, name="textout", label="Text output", category="test")
         # input pads (TODO: create dynamically, on demand of connection. *ouch*)
         # hint: copy objects?
-        pad_1 = ioflow.TPad(label="W Btn 1", flow="in", min=0, max=1)
-        pad_2 = ioflow.TPad(label="W Btn 2", flow="in", min=0, max=1)
-        pad_3 = ioflow.TPad(label="W Btn 3", flow="in", min=0, max=1)
-        pad_4 = ioflow.TPad(label="W Btn 4", flow="in", min=0, max=1)
-        pad_5 = ioflow.TPad(label="W Btn 5", flow="in", min=0, max=1)
+        pad_1 = ioflow.TPad(label="W Btn 1", value=0, flow="in", min=0, max=1)
+        pad_2 = ioflow.TPad(label="W Btn 2", value=0, flow="in", min=0, max=1)
+        pad_3 = ioflow.TPad(label="W Btn 3", value=0, flow="in", min=0, max=1)
+        pad_4 = ioflow.TPad(label="W Btn 4", value=0, flow="in", min=0, max=1)
+        pad_5 = ioflow.TPad(label="W Btn 5", value=0, flow="in", min=0, max=1)
         
         # group input pads together in a plug:
+        # FIXME: if pads in connected plugs don't match, conversion fails.
+        # In this case, "pad5" is not connected later on, thus distorting the conversion.
+        # possible solution: TSocket ?
         plug_in = ioflow.TPlug(name="buttons_in", label="W btn inputs", 
                                pads=[pad_1, pad_2, pad_3, pad_4, pad_5], 
                                listener=self.on_change)
         self.add_plug(plug_in)
         
         # output pads               
-        pad_out = ioflow.TPad(label="Value output", flow="out", min=min, max=max)
+        pad_out = ioflow.TPad(label="Value output", flow="out", value=0, min=min, max=max, listener=self.print_value)
         self.add_pad(pad_out)
         
     
@@ -62,9 +65,14 @@ class IOF_WdRadioBtnGroup(ioflow.TWidget):
         
         """
         print "btn index: %d" % index # let us know that something happened.
+        self.pads[0].recv(index, min=0, max=len(self.plugs[0].pads)-1)
         # TODO: find a way to input raw values into pads, but profit from their internal conversion
         # features without necessity for an intermediate pad (it's ugly).
         # idea: add a "recv_raw(value, min, max)" method to pads. should be sufficient?
+        
+    def print_value(self, pad=None):
+        """Dirty debugging function: prints pad values."""
+        print pad.value
     
         
 
@@ -139,7 +147,7 @@ class IOF_HwMouse(ioflow.THardware):
 #---------------------------------------------------
 def _test_classes():
     iof_hw_mouse = IOF_HwMouse()
-    iof_wd_radio = IOF_WdRadioBtnGroup(min=24, max=124)
+    iof_wd_radio = IOF_WdRadioBtnGroup(min=0, max=100)
     
     mouse_btns = ioflow.TPlug(name="mouse_buttons", label="Mouse buttons")
     # fill plug with pads:

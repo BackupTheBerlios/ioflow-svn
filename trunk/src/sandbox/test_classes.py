@@ -17,7 +17,7 @@
 """
 
 """ioflow class implementation draft."""
-__version__ = '0.8 - december 1st, 2008 - 16:20'
+__version__ = '0.9 - december 2nd, 2008 - 11:50'
 __author__ = 'Peter Bubestinger (pb@das-werkstatt.com)'
 
 import logging
@@ -104,13 +104,13 @@ class TGate(TPadFilter):
             return None
         else:
             if (self.type == "lowpass") and (value <= self.min):
-                print "%s (%d)" % (self.type, value)
+                logging.debug("%s (%d)" % (self.type, value))
                 return value
             elif (self.type == "midpass") and ((value >= self.min) and (value <= self.max)):
-                print "%s (%d)" % (self.type, value)
+                logging.debug("%s (%d)" % (self.type, value))
                 return value
             elif (self.type == "highpass") and (value >= self.max):
-                print "%s (%d)" % (self.type, value)
+                logging.debug("%s (%d)" % (self.type, value))
                 return value
             else:
                 # print "blocked"
@@ -130,6 +130,7 @@ class TDelay(TPadFilter):
 
 #----------------------------------------------------------------------------
 class TPad(TIoFlowObject):
+    #FIXME: value *must* be supplied at instantiation time to determine its initial datatype.
     def __init__(self, name="pad", label="Pad", value=None, offset=0, 
                  connects=[], flow="out", type="numeric",
                  keepalive=0, ramping=0, calibration=False,
@@ -194,9 +195,23 @@ class TPad(TIoFlowObject):
         if filter != None:
             self.filters.append(filter)
             
-    def convert(self, value):
+    def auto_calibrate(self, value):
+        # TODO implement auto calibration
+        pass
+            
+    def convert(self, value, in_min=None, in_max=None):
         """take care of value/type transformations."""
-        # TODO: implement conversion.
+        # TODO: implement & check conversion.
+        # - value conversion (in:min/max > out:min/max)
+        if (value != None):
+            if (in_min != None) and (in_max != None):
+                factor = float(self.max - self.min) / float(in_max - in_min)
+                value = (value - in_min) * factor + self.min
+                
+                # - type conversion (str, int, float, ...)
+                if (type(value) != type(self.value)) and (self.value != None):            
+                    value = type(self.value)(value)
+            
         return value
         
 
@@ -206,10 +221,23 @@ class TPad(TIoFlowObject):
             pad.recv(self.value, self)
 
 
-    def recv(self, value, pad=None):
-        """update current value (triggered by source pads)."""        
+    def recv(self, value, pad=None, min=None, max=None):
+        """update current value (triggered by source pads).
+        
+        Note: min/max are only necessary if a non-pad calls it directly.
+        
+        """
         # Adjust type, range, etc:
-        value = self.convert(value)
+        if isinstance(pad, TPad):
+            value = self.convert(value, pad.min, pad.max)
+        else:
+            if (min != None) and (max != None):
+                # we're getting a value supplied from a non-pad:
+                value = self.convert(value, min, max)
+            else:
+                # TODO: evaluate when this happens.
+                value = self.convert(value)
+            
         # Run it through filters:
         if self.filters_apply(value) != None:
             self.value = value     # If the value made it through, update it
@@ -277,12 +305,35 @@ class TPlug(TIoFlowObject):
             
         
     def connect(self, plug):
-        """Initiate connection to other plug."""
+        """Initiate connection to other plug.
+        
+        Returns number (int) of valid connections made.
+        
+        """
         # Currently just connects as many pads as possible by iteration.
         # TODO: Think about use cases that might break this.
+        valid = 0
         for i in range(0, len(plug.pads)):
             if self.pads[i] != None:
-                plug.pads[i].connect(self.pads[i])
+                try:
+                    plug.pads[i].connect(self.pads[i])
+                    valid += 1
+                except:
+                    # TODO: handle real ioflow exception.
+                    print "incompatible plugs"
+                    
+        return valid
+    
+    
+class TSocket(TPlug):
+    """Sockets are plugs that *only* accept incoming connections from a single plug source.
+    
+    - Input pads are created on-the-fly if new connections are coming in.
+    - They're cloned(copied) from a master input-pad.
+    
+    """
+    # TODO: implement this.
+    pass
 
 
 
