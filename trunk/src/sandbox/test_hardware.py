@@ -45,16 +45,14 @@ class IOF_WdRadioBtnGroup(ioflow.TWidget):
         pad_5 = ioflow.TPad(label="W Btn 5", value=0, flow="in", min=0, max=1)
         
         # group input pads together in a plug:
-        # FIXME: if pads in connected plugs don't match, conversion fails.
-        # In this case, "pad5" is not connected later on, thus distorting the conversion.
-        # possible solution: TSocket ?
         plug_in = ioflow.TPlug(name="buttons_in", label="W btn inputs", 
                                pads=[pad_1, pad_2, pad_3, pad_4, pad_5], 
                                listener=self.on_change)
         self.add_plug(plug_in)
         
         # output pads               
-        pad_out = ioflow.TPad(label="Value output", flow="out", value=0, min=min, max=max, listener=self.print_value)
+        pad_out = ioflow.TPad(label="Value output", flow="out", value=0, 
+                              min=min, max=max, listener=self.print_value)
         self.add_pad(pad_out)
         
     
@@ -64,11 +62,10 @@ class IOF_WdRadioBtnGroup(ioflow.TWidget):
         This function defines the specific behavior of this widget.
         
         """
-        print "btn index: %d" % index # let us know that something happened.
-        self.pads[0].recv(index, min=0, max=len(self.plugs[0].pads)-1)
-        # TODO: find a way to input raw values into pads, but profit from their internal conversion
-        # features without necessity for an intermediate pad (it's ugly).
-        # idea: add a "recv_raw(value, min, max)" method to pads. should be sufficient?
+        # setting a "raw" value (from non-pad), requires to provide min/max information about source:
+        # TODO: hardcoded indices are pure evil. find a better way!
+        self.pads[0].recv(index, min=0, max=self.plugs[0].active_pads -1)
+        
         
     def print_value(self, pad=None):
         """Dirty debugging function: prints pad values."""
@@ -87,7 +84,7 @@ class IOF_HwMouse(ioflow.THardware):
         self.init_faders()
         self.running = 1
         
-        # show off some filtering action:
+        # - show off some filtering action (filter_gate):
         gate1 = ioflow.TGate(name="filter_gate", label="X-gate", min=100, type="lowpass")
         gate2 = ioflow.TGate(name="filter_gate", label="Y-gate", min=100, max=200, type="midpass")
         
@@ -112,8 +109,9 @@ class IOF_HwMouse(ioflow.THardware):
     
         
     def init_faders(self):
-        self.faders = [self.add_fader("X-axis", 0, min=0, max=IOF_HwMouse.SCREEN_WIDTH),
-                       self.add_fader("Y-axis", 0, min=0, max=IOF_HwMouse.SCREEN_HEIGHT)]
+        # - assigning weird min/max to test auto_calibration.
+        self.faders = [self.add_fader("X-axis", 0, min=100, max=0, calibrate=True),
+                       self.add_fader("Y-axis", 0, min=100, max=0, calibrate=True)]
         
         self.X_AXIS = 0
         self.Y_AXIS = 1

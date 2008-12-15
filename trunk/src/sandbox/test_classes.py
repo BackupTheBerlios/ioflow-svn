@@ -17,7 +17,7 @@
 """
 
 """ioflow class implementation draft."""
-__version__ = '0.9 - december 2nd, 2008 - 11:50'
+__version__ = '0.11 - december 3rd, 2008 - 20:00'
 __author__ = 'Peter Bubestinger (pb@das-werkstatt.com)'
 
 import logging
@@ -130,10 +130,9 @@ class TDelay(TPadFilter):
 
 #----------------------------------------------------------------------------
 class TPad(TIoFlowObject):
-    #FIXME: value *must* be supplied at instantiation time to determine its initial datatype.
-    def __init__(self, name="pad", label="Pad", value=None, offset=0, 
+    def __init__(self, value, name="pad", label="Pad", offset=0, 
                  connects=[], flow="out", type="numeric",
-                 keepalive=0, ramping=0, calibration=False,
+                 keepalive=0, ramping=0, calibrate=False,
                  filters=[], min=0, max=100, precision=2, listener=None):
         TIoFlowObject.__init__(self, name, label)
         self.value = value                      # (variant) current value of data in pad
@@ -143,7 +142,7 @@ class TPad(TIoFlowObject):
         self.type = type                        # (numeric|string|xxx) type 
         self.keepalive = keepalive              # (numeric) interval between re-sending of value (in msec)
         self.ramping = ramping                  # (numeric) time delay between 2 values (in msec)
-        self.calibration = calibration          # (bool) auto calibration on/off
+        self.calibrate = calibrate              # (bool) auto calibration on/off
         self.filters = filters                  # (list of TPadFilter) Applied in order of list.
         self.min = min                          # (numeric) lower range limit
         self.max = max                          # (numeric) upper range limit
@@ -159,6 +158,7 @@ class TPad(TIoFlowObject):
         """Add more listener functions to this pad."""
         if listener != None:
             self.listeners.append(listener)
+            
 
     def update_connects(self):
         """Resets and fills local input/outputs lists based on flow of connected pads."""
@@ -176,41 +176,74 @@ class TPad(TIoFlowObject):
                 
     def connect(self, pad):
         """Handle incoming connection requests."""
-        # TODO: block out>out and in>in connections.
-        # use ioflow-specific exception "EConnectionMismatch"
+        
         print "connecting %s to %s..." % (self.name, pad.name)
-        self.connects.append(pad)
-        pad.connects.append(self)
-        self.update_connects()
+        if pad in self.connects:    # avoid double connects.
+            return False
+        else:            
+            if (self.flow == pad.flow) and (self.flow != ["duplex"]):
+                # TODO: use ioflow-specific exception "EConnectionMismatch"
+                print "incompatible pad flow directions"
+                return False
+            else:
+                self.connects.append(pad)
+                pad.connects.append(self)
+                self.update_connects()
+                return True
         
     
-    def filters_apply(self, value):
+    def apply_filters(self, value):
         """Apply the filter chain in order of "self.filters" list."""
         for filter in self.filters:
             value = filter.apply(value)
         return value
     
-    def filters_insert(self, filter, position=0):
-        #TODO: insert filter at given position in list.
+    def insert_filter(self, filter, position=None):
         if filter != None:
-            self.filters.append(filter)
+            if position != None:
+                self.filters.insert(position, filter)
+            else:
+                self.filters.append(filter)
+            
             
     def auto_calibrate(self, value):
-        # TODO implement auto calibration
-        pass
+        """Update pads min/max range according to incoming values.
+        
+        Calibration is mutually exclusive to value conversion, because conversion
+        would kick in and disguise exceeding range limits.
+        
+        A "TypeError" exception is raised if the incoming value has a 
+        different datatype, avoiding unpredictable results.
+        
+        """
+        if type(value) != type(self.value):
+            raise TypeError, "Value type changed during calibration!"
+        
+        if value < self.min:
+            print "new min: %d" % value
+            self.min = value
+        if value > self.max:
+            print "new max: %d" % value
+            self.max = value
+            
             
     def convert(self, value, in_min=None, in_max=None):
-        """take care of value/type transformations."""
-        # TODO: implement & check conversion.
+        """take care of value range/type transformations."""
+        # TODO: verify proper conversion. use pydoc-tests?
         # - value conversion (in:min/max > out:min/max)
         if (value != None):
+            # - range conversion:
             if (in_min != None) and (in_max != None):
                 factor = float(self.max - self.min) / float(in_max - in_min)
                 value = (value - in_min) * factor + self.min
+            else:
+                # We can only call calibration if there is *no* range given:
+                if self.calibrate: 
+                    self.auto_calibrate(value)
                 
-                # - type conversion (str, int, float, ...)
-                if (type(value) != type(self.value)) and (self.value != None):            
-                    value = type(self.value)(value)
+            # - type conversion (str, int, float, ...)
+            if (type(value) != type(self.value)) and (self.value != None):            
+                value = type(self.value)(value)
             
         return value
         
@@ -239,7 +272,7 @@ class TPad(TIoFlowObject):
                 value = self.convert(value)
             
         # Run it through filters:
-        if self.filters_apply(value) != None:
+        if self.apply_filters(value) != None:
             self.value = value     # If the value made it through, update it
             self.send()            # Propagate it to outputs
             for listener in self.listeners:
@@ -258,18 +291,24 @@ class TPlug(TIoFlowObject):
     """A plug is a group of pads.
 
     Plugs are making it easier and less cluttered to handle multiple pads at once.
+    Furthermore, they're keeping some track about pads they've connected, useful for
+    multi-element behavior.
 
     """
-    def __init__(self, name="plug", label="Plug", connects=[], pads=[], listener=None):
+    def __init__(self, name="plug", label="Plug", connects=[], pads=[], 
+                 listener=None):
         TIoFlowObject.__init__(self, name, label)
-        self.connects = []            # (list of TPlug) sockets this is plug is connected to.
+        
+        self.active_pads = 0         # (int) number of pads connected.
+        
+        self.connects = []           # (list of TPlug) sockets this is plug is connected to.
         for plug in connects:
             self.connect(plug)
         
-        self.pads = []                # (list of TPad) all the pins in the plug
+        self.pads = []               # (list of TPad) all the pins in the plug
         self.add_pads(pads)                
         
-        self.listeners = []           # (list of function) functions to execute upon value change.
+        self.listeners = []          # (list of function) functions to execute upon value change.
         self.add_listener(listener)
         
         
@@ -310,30 +349,19 @@ class TPlug(TIoFlowObject):
         Returns number (int) of valid connections made.
         
         """
+        self.connects.append(plug)
         # Currently just connects as many pads as possible by iteration.
         # TODO: Think about use cases that might break this.
-        valid = 0
         for i in range(0, len(plug.pads)):
             if self.pads[i] != None:
                 try:
-                    plug.pads[i].connect(self.pads[i])
-                    valid += 1
+                    if plug.pads[i].connect(self.pads[i]):
+                        self.active_pads += 1
                 except:
                     # TODO: handle real ioflow exception.
                     print "incompatible plugs"
                     
-        return valid
-    
-    
-class TSocket(TPlug):
-    """Sockets are plugs that *only* accept incoming connections from a single plug source.
-    
-    - Input pads are created on-the-fly if new connections are coming in.
-    - They're cloned(copied) from a master input-pad.
-    
-    """
-    # TODO: implement this.
-    pass
+        return self.active_pads
 
 
 
@@ -364,7 +392,7 @@ class TElement(TIoFlowObject):
         self.pads[pad_index].recv(value)
         
     def insert_filter(self, filter, position=0, pad_index=0):
-        self.pads[pad_index].filters_insert(filter, position)
+        self.pads[pad_index].insert_filter(filter, position)
         
     def add_pads(self, pads):
         """Add more pads to this element."""
@@ -398,9 +426,9 @@ class TButton(TElement):
     def __init__(self, name="button", label="Button", value=0):
         self.pads = []    # start with no pads
         # --- output pin/pad:        
-        pad_out = TPad(name="output", label="Button state", value=value, offset=0,
+        pad_out = TPad(value, name="output", label="Button state", offset=0,
                        connects=[], flow="out", type="numeric", 
-                       keepalive=0, ramping=0, calibration=False,
+                       keepalive=0, ramping=0, calibrate=False,
                        filters=[], min=0, max=1, precision=0)
         # TODO: currently no plug is used, but pads directly. check.
         # think about it and check/verify if it's ok.
@@ -411,11 +439,11 @@ class TButton(TElement):
         
     def press(self):
         self.set_value(TButton.PRESS, TButton.PAD_OUT)
-        print "btn %s (%s) press" % (self.label, self.name)
+        logging.debug("btn %s (%s) press" % (self.label, self.name))
     
     def release(self):
         self.set_value(TButton.RELEASE, TButton.PAD_OUT)
-        print "btn %s (%s) release" % (self.label, self.name)
+        logging.debug("btn %s (%s) release" % (self.label, self.name))
 
 
 
@@ -434,7 +462,7 @@ class TPixel(TElement):
         #TODO: set pad to use "value" as default.
         # (numeric) color value (24bit: 0xRRGGBB), default: black (0x000000)
         self.pads = []
-        pad_in = TPad(name="input", label="Pixel color", value=value, offset=0,
+        pad_in = TPad(value, name="input", label="Pixel color", offset=0,
                       connects=[], flow="in", type="numeric", 
                       keepalive=0, ramping=0, calibration=False,
                       filters=[], min=0, max=0xFFFFFF, precision=0)
@@ -455,12 +483,13 @@ class TFader(TElement):
     """
     PAD_OUT = 0
     
-    def __init__(self, name="fader", label="Fader", value=0, min=0, max=100):
+    def __init__(self, name="fader", label="Fader", value=0, min=0, max=100, 
+                 calibrate=False, precision=0):
         self.pads = []
-        pad_out = TPad(name="output", label="Fader value", value=value, offset=0,
+        pad_out = TPad(value, name="output", label="Fader value", offset=0,
                        connects=[], flow="out", type="numeric", 
-                       keepalive=0, ramping=0, calibration=False,
-                       filters=[], min=min, max=max, precision=0)
+                       keepalive=0, ramping=0, calibrate=calibrate,
+                       filters=[], min=min, max=max, precision=precision)
         self.add_pad(pad_out)
         
 
@@ -513,9 +542,10 @@ class THardware(Thread, TIoFlowObject):
         self.elements.append(button)
         return button
     
-    def add_fader(self, label="Fader", value=0, min=0, max=100):
+    def add_fader(self, label="Fader", value=0, min=0, max=100, calibrate=False, precision=2):
         """Create a new fader element and add it to this hardware."""
-        fader = TFader("%s.fader" % self.name, label, value)
+        fader = TFader("%s.fader" % self.name, label=label, value=value, 
+                       min=min, max=max, calibrate=calibrate, precision=precision)
         self.elements.append(fader)
         return fader
         
