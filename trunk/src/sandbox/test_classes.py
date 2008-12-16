@@ -17,11 +17,15 @@
 """
 
 """ioflow class implementation draft."""
-__version__ = '0.11 - december 3rd, 2008 - 20:00'
+__version__ = '0.13 - december 16th, 2008 - 22:30'
 __author__ = 'Peter Bubestinger (pb@das-werkstatt.com)'
 
 import logging
 from threading import Thread
+import thread    # TODO: threading & thread: ok?
+import time
+
+log = logging.getLogger("ioflow")
 
 
 #----------------------------------------------------------------------------
@@ -34,34 +38,79 @@ class TIoFlowObject:
     fields:
       name -- (string) name handle
       label -- (string) human readable name
+      parent -- (TIoFlowObject) parent of this object
+      index -- (integer) index count within scope of this object
     
     """
-    _counter = 0
+    _instances = 0
     
-    def __init__(self, name="ioflow_object", label="ioFlow Object"):                
-        # TODO: have individual, meaningful counters per entitiy.
-        # example: hardware_1.button_1, hardware_1.button_2
-        TIoFlowObject._counter += 1
-
+    def __init__(self, name="ioflow_object", label="ioFlow Object", 
+                 parent=None, index=None):
+        TIoFlowObject._instances += 1    # count ioflow instances.
         
-        logging.debug("[TIoFlowObject] args: %s, %s" % (name, label))
-        self.name = "%s_%d" % (name, TIoFlowObject._counter)
+        self.name = name
         self.label = label
-        logging.debug("[TIoFlowObject] fields: %s, %s" % (self.name, self.label))
+        self.parent = parent
         
+        if index == None:
+            self.__class__._instances += 1
+            index = self.__class__._instances
+        self.index = index
+        
+        log.debug("created [%s]: %s, %s, %d", self.__class__.__name__, self.name, self.label, self.index)
+        
+        
+    def welcome(self, parent, siblings):
+        """Introduces this ioflow object into a certain hierarchical structure.
+        
+        This method assigns the object's parent and a useful index, based
+        on the number of existing items in 'siblings'.
+        
+        arguments:
+          parent -- parent object
+          siblings -- list of entities of same class type in same hierarchy.
+        
+        """
+        self.parent = parent
+        self.index = len(siblings) + 1
+        log.info("Added '%s'[%s] as '%s' to %s", 
+                 self.label, self.__class__.__name__, self.get_name(), 
+                 parent.get_name(level=3, labeled=True))
 
+
+    def get_name(self, level=0, labeled=False, typed=False):
+        """Returns naming information for this object.
+        
+        arguments:
+          level -- (integer) max. levels of hierarchy to display.
+          labeled -- (boolean) include label
+          typed -- (boolean) include class name
+        
+        """
+        name = "%s_%d" % (self.name, self.index)
+        if labeled:
+            name = "%s(%s)" % (name, self.label)
+        if typed:
+            name = "%s[%s]" % (name, self.__class__.__name__)
+        
+        if (level > 0) and (self.parent != None):
+            name = "%s.%s" % (self.parent.get_name(level=level-1, labeled=labeled), name)
+        return name
+    
+            
 
 #----------------------------------------------------------------------------
 class TPadFilter(TIoFlowObject):
     """Simple flow control and value filtering mechanism."""
-    def __init__(self, name="filter", label="Filter", keep_old=0):
-        TIoFlowObject.__init__(self, name, label)
+    def __init__(self, name="filter", label="Filter", 
+                 parent=None, index=None, 
+                 keep_old=0):
+        TIoFlowObject.__init__(self, name, label, parent, index)
 
         # store previous values. useful for differential filters:
         self.keep_old = keep_old    # (numeric) how many previous values to store.
         self.old = []               # (list of variant) previous values.
  
-        
         
     def apply(self, value):
         """(abstract) applies filter to given value.
@@ -86,8 +135,9 @@ class TGate(TPadFilter):
     
     """
     def __init__(self, name="filter_gate", label="Filter: Gate", 
+                 parent=None, index=None, 
                  min=0, max=100, type="midpass"):
-        TPadFilter.__init__(self, name, label)
+        TPadFilter.__init__(self, name, label, parent, index)
         self.min = min        # (numeric)
         self.max = max        # (numeric)
         self.type = type      # (string) [lowpass|midpass|highpass]
@@ -96,21 +146,20 @@ class TGate(TPadFilter):
     def apply(self, value):
         """Returns the value if it passes the gate, otherwise returns None."""
         TPadFilter.apply(self, value)
-        logging.debug("[TGate]: applying %s (%d %d) %d" % (self.type, self.min, self.max, value))
         
         # TODO: check value type
         if value == None:
-            print "filter empty."
+            # log.debug("filter empty: %s", self.get_name())
             return None
         else:
             if (self.type == "lowpass") and (value <= self.min):
-                logging.debug("%s (%d)" % (self.type, value))
+                log.debug("%s (%d)" % (self.type, value))
                 return value
             elif (self.type == "midpass") and ((value >= self.min) and (value <= self.max)):
-                logging.debug("%s (%d)" % (self.type, value))
+                log.debug("%s (%d)" % (self.type, value))
                 return value
             elif (self.type == "highpass") and (value >= self.max):
-                logging.debug("%s (%d)" % (self.type, value))
+                log.debug("%s (%d)" % (self.type, value))
                 return value
             else:
                 # print "blocked"
@@ -122,36 +171,76 @@ class TGate(TPadFilter):
 class TDelay(TPadFilter):
     """Delays the output of a received value."""
     def __init__(self, name="filter_delay", label="Filter: Delay",
+                 parent=None, index=None, 
                  duration=500):
-        TPadFilter.__init__(self, name, label)
+        TPadFilter.__init__(self, name, label, parent, index)
         self.duration = duration        # (numeric) time in msec to wait until propagating the input value.
 
 
 
 #----------------------------------------------------------------------------
-class TPad(TIoFlowObject):
-    def __init__(self, value, name="pad", label="Pad", offset=0, 
+class TPad(Thread, TIoFlowObject):
+    _instances = 0
+    
+    def __init__(self, value, name="pad", label="Pad", 
+                 parent=None, index=None, 
+                 offset=0, 
                  connects=[], flow="out", type="numeric",
                  keepalive=0, ramping=0, calibrate=False,
                  filters=[], min=0, max=100, precision=2, listener=None):
-        TIoFlowObject.__init__(self, name, label)
+        TIoFlowObject.__init__(self, name, label, parent, index)
+        Thread.__init__(self, name=name)
+        
         self.value = value                      # (variant) current value of data in pad
         self.offset = offset                    # (numeric) +/- offset to add to the value before sending
         self.connects = connects                # (list of TPad) existing connections
         self.flow = flow                        # ([in|out|duplex]) data flow of pad: "sink|source|both"
         self.type = type                        # (numeric|string|xxx) type 
-        self.keepalive = keepalive              # (numeric) interval between re-sending of value (in msec)
-        self.ramping = ramping                  # (numeric) time delay between 2 values (in msec)
         self.calibrate = calibrate              # (bool) auto calibration on/off
         self.filters = filters                  # (list of TPadFilter) Applied in order of list.
         self.min = min                          # (numeric) lower range limit
         self.max = max                          # (numeric) upper range limit
         self.precision = precision              # (numeric) number of digits after the comma. for floats.
         
+        self.keepalive = keepalive -1           # initializing it with wrong value to trigger thread activation.
+        self.set_keepalive(keepalive)           # (numeric) interval between re-sending of value (in msec)
+        self.ramping = ramping                  # (numeric) time delay between 2 values (in msec)
+        self._running = False                   # (boolean) used to start/stop a pad-thread.
+        
         self.listeners = []                     # (list of function) functions to execute upon value change.
         self.add_listener(listener)
         
         self.update_connects()                  # make sure that connection lists are up to date.
+        
+        
+    def run(self):
+        """Thread routine. If necessary, a pad will start its own thread."""
+        return
+        # FIXME: find a way to control threading pads.
+        # Currently, this thread will never stop.
+        while self._running:
+            # Take care of re-sending the current value:
+            if self.keepalive > 0:
+                self.send()
+                time.sleep(self.keepalive / 1000)    # convert from msec to seconds.
+        
+        
+    def set_ramping(self, delay):
+        """Time delay (in msec) between 2 values. Used for interpolation."""
+        # TODO: implement this
+        # problem: Initial idea was to use "keepalive" for transmitting
+        # intermediate values of ramping, but there might be a case where you don't want
+        # to use keepalive, but *do* want ramping.
+        pass
+        
+        
+    def set_keepalive(self, delay):
+        """Update the delay (in msec) between re-sending the current value."""
+        if (delay > 0) and (delay != self.keepalive):
+            self.keepalive = delay
+            if not(self._running):
+                self._running = True
+                self.start()
         
 
     def add_listener(self, listener):
@@ -165,25 +254,27 @@ class TPad(TIoFlowObject):
         self.inputs = []                        # (list of TPad) connections to listen to.
         self.outputs= []                        # (list of TPad) connections to send to.
         
-        print "connections of %s:" % self.name
+        if len(self.connects) > 0:
+            log.debug("connections of %s:" % self.get_name())
+            
         for pad in self.connects:
             if pad.flow in ["in", "duplex"]:
-                print "output %s (%s)" % (pad.label, pad.name)
+                log.debug("output %s (%s)" % (pad.label, pad.name))
                 self.outputs.append(pad)
             elif pad.flow in ["out", "duplex"]:
-                print "input %s (%s)" % (pad.label, pad.name)
+                log.debug("input %s (%s)" % (pad.label, pad.name))
                 self.inputs.append(pad)
                 
     def connect(self, pad):
         """Handle incoming connection requests."""
         
-        print "connecting %s to %s..." % (self.name, pad.name)
+        log.info("connecting %s to %s..." % (self.get_name(level=5), pad.get_name(level=5)))
         if pad in self.connects:    # avoid double connects.
             return False
         else:            
             if (self.flow == pad.flow) and (self.flow != ["duplex"]):
                 # TODO: use ioflow-specific exception "EConnectionMismatch"
-                print "incompatible pad flow directions"
+                print "incompatible pad flow directions: %s, %s" % (self.flow, pad.flow)
                 return False
             else:
                 self.connects.append(pad)
@@ -198,8 +289,11 @@ class TPad(TIoFlowObject):
             value = filter.apply(value)
         return value
     
+    
     def insert_filter(self, filter, position=None):
         if filter != None:
+            filter.welcome(self, self.filters)
+            
             if position != None:
                 self.filters.insert(position, filter)
             else:
@@ -213,17 +307,17 @@ class TPad(TIoFlowObject):
         would kick in and disguise exceeding range limits.
         
         A "TypeError" exception is raised if the incoming value has a 
-        different datatype, avoiding unpredictable results.
+        different datatype, in order to avoid unpredictable results.
         
         """
         if type(value) != type(self.value):
-            raise TypeError, "Value type changed during calibration!"
+            raise TypeError("Value type changed during calibration!")
         
         if value < self.min:
-            print "new min: %d" % value
+            # print "new min: %d" % value
             self.min = value
         if value > self.max:
-            print "new max: %d" % value
+            # print "new max: %d" % value
             self.max = value
             
             
@@ -277,7 +371,7 @@ class TPad(TIoFlowObject):
             self.send()            # Propagate it to outputs
             for listener in self.listeners:
                 if listener != None:
-                    listener(self)    # trigger listener action
+                    thread.start_new_thread(listener, tuple([self]))    # trigger listener action
         
 
     def bang(self):
@@ -295,9 +389,11 @@ class TPlug(TIoFlowObject):
     multi-element behavior.
 
     """
-    def __init__(self, name="plug", label="Plug", connects=[], pads=[], 
+    def __init__(self, name="plug", label="Plug", 
+                 parent=None, index=None, 
+                 connects=[], pads=[], 
                  listener=None):
-        TIoFlowObject.__init__(self, name, label)
+        TIoFlowObject.__init__(self, name, label, parent, index)
         
         self.active_pads = 0         # (int) number of pads connected.
         
@@ -317,6 +413,7 @@ class TPlug(TIoFlowObject):
         if listener != None:
             self.listeners.append(listener)
         
+        
     def add_pads(self, pads):
         """Adds more pads to this plug."""
         try:
@@ -324,19 +421,22 @@ class TPlug(TIoFlowObject):
                 self.add_pad(pad)
         except TypeError:
             print "argument 'pads' must be a list!"
+        
             
     def add_pad(self, pad):
         """Add single new pad to this plug."""
         if isinstance(pad, TPad):
             pad.add_listener(self.on_change)    # tell this pad to notify us about its changes.
+            # pad.welcome(self, self.pads)
             self.pads.append(pad)
+        
             
     def on_change(self, pad):
         """listener function that acts upon changes in pads."""
         try:
             index = self.pads.index(pad)
         except ValueError:
-            print "pad %s not in plug %s" % (pad.name, self.name)
+            print "pad %s not in plug %s" % (pad.name, self.get_name())
             
         for listener in self.listeners:
                 if listener != None:
@@ -368,7 +468,9 @@ class TPlug(TIoFlowObject):
 #----------------------------------------------------------------------------
 class TGroup(TIoFlowObject):
     """Grouping ioflow objects to have a common handle."""
-    def __init__(self, name, label, contents=[]):
+    def __init__(self, name, label, 
+                 parent=None, index=None, contents=[]):
+        TIoFlowObject.__init__(self, name, label, parent, index)
         self.contents = contents           # could be any type: element, widget, pad, ...
 
 
@@ -382,17 +484,20 @@ class TElement(TIoFlowObject):
     - type (input/output) is determined by pad(s).
 
     """
-    def __init__ (self, name=None, label=None, pads=[]):
-        TIoFlowObject.__init__(self, name, label)
+    def __init__ (self, name=None, label=None, 
+                  parent=None, index=None, pads=[]):
+        TIoFlowObject.__init__(self, name, label, parent, index)
         self.pads = pads               # (list of TPad) type "in/out" is defined by pads
-        logging.debug("[TElement] created: \"%s\" (%s)" % (self.label, self.name))
+    
     
     def set_value(self, value, pad_index=0):
         """Triggers a 'receive' event on the given pad and updates the value."""
         self.pads[pad_index].recv(value)
+    
         
     def insert_filter(self, filter, position=0, pad_index=0):
         self.pads[pad_index].insert_filter(filter, position)
+    
         
     def add_pads(self, pads):
         """Add more pads to this element."""
@@ -401,10 +506,12 @@ class TElement(TIoFlowObject):
                 self.add_pad(pad)
         except TypeError:
             print "argument 'pads' must be a list!"
+    
             
     def add_pad(self, pad):
         """Adds a single pad to this element (after verifying that it's a pad)."""
         if isinstance(pad, TPad):
+            pad.welcome(self, self.pads)
             self.pads.append(pad)
 
 
@@ -419,31 +526,38 @@ class TButton(TElement):
     - press / release
 
     """
-    PRESS = 1
-    RELEASE = 0
+    _instances = 0
+    
     PAD_OUT = 0
     
-    def __init__(self, name="button", label="Button", value=0):
-        self.pads = []    # start with no pads
+    PRESS = 1
+    RELEASE = 0
+    
+    
+    def __init__(self, value=None, name="button", label="Button",
+                 parent=None, index=None):
+        TElement.__init__(self, name, label, parent, index, pads=[])
+        
+        if value == None:
+            value = self.__class__.RELEASE
+            
         # --- output pin/pad:        
-        pad_out = TPad(value, name="output", label="Button state", offset=0,
+        self.add_pad(TPad(value, name="output", label="Button state", offset=0,
                        connects=[], flow="out", type="numeric", 
                        keepalive=0, ramping=0, calibrate=False,
-                       filters=[], min=0, max=1, precision=0)
+                       filters=[], min=0, max=1, precision=0))
         # TODO: currently no plug is used, but pads directly. check.
         # think about it and check/verify if it's ok.
-        self.add_pad(pad_out)
-        
-        TElement.__init__(self, name, label, self.pads)
         
         
     def press(self):
         self.set_value(TButton.PRESS, TButton.PAD_OUT)
-        logging.debug("btn %s (%s) press" % (self.label, self.name))
+        log.debug("btn %s (%s) press" % (self.label, self.get_name()))
+    
     
     def release(self):
         self.set_value(TButton.RELEASE, TButton.PAD_OUT)
-        logging.debug("btn %s (%s) release" % (self.label, self.name))
+        log.debug("btn %s (%s) release" % (self.label, self.get_name()))
 
 
 
@@ -458,15 +572,25 @@ class TPixel(TElement):
     """
     PAD_IN = 0
     
-    def __init__(self, name="pixel", label="Pixel", value=0x000000):
-        #TODO: set pad to use "value" as default.
-        # (numeric) color value (24bit: 0xRRGGBB), default: black (0x000000)
-        self.pads = []
-        pad_in = TPad(value, name="input", label="Pixel color", offset=0,
+    BLACK = 0x000000
+    RED = 0xFF0000
+    GREEN = 0x00FF00
+    BLUE = 0x0000FF
+    WHITE = 0xFFFFFF
+    
+    
+    def __init__(self, value=None, name="pixel", label="Pixel",
+                 parent=None, index=None):
+        TElement.__init__(self, name, label, parent, index, pads=[])
+        
+        if value == None:
+            # (numeric) color value (24bit: 0xRRGGBB), default: black (0x000000)
+            value = self.__class__.BLACK
+        
+        self.add_pad(TPad(value, name="input", label="Pixel color", offset=0,
                       connects=[], flow="in", type="numeric", 
                       keepalive=0, ramping=0, calibration=False,
-                      filters=[], min=0, max=0xFFFFFF, precision=0)
-        self.add_pad(pad_in)
+                      filters=[], min=0, max=0xFFFFFF, precision=0))
 
 
 
@@ -483,14 +607,19 @@ class TFader(TElement):
     """
     PAD_OUT = 0
     
-    def __init__(self, name="fader", label="Fader", value=0, min=0, max=100, 
-                 calibrate=False, precision=0):
-        self.pads = []
-        pad_out = TPad(value, name="output", label="Fader value", offset=0,
+    
+    def __init__(self, value=None, name="fader", label="Fader", 
+                 parent=None, index=None, 
+                 min=0, max=100, calibrate=False, precision=0):
+        TElement.__init__(self, name, label, parent, index, pads=[])
+        
+        if value == None:
+            value = 0
+            
+        self.add_pad(TPad(value, name="output", label="Fader value", offset=0,
                        connects=[], flow="out", type="numeric", 
                        keepalive=0, ramping=0, calibrate=calibrate,
-                       filters=[], min=min, max=max, precision=precision)
-        self.add_pad(pad_out)
+                       filters=[], min=min, max=max, precision=precision))
         
 
 
@@ -507,26 +636,38 @@ class TWidget(TElement):
     - group several buttons together to act as a radiogroup.
 
     """
+    _instances = 0
+    
     
     # TODO: Find a way for handling categories to avoid wild growth. e.g. dictionary?
-    def __init__(self, name="widget", label="Widget", pads=[], plugs=[], settings={}, category="all"):
+    def __init__(self, name="widget", label="Widget", 
+                 parent=None, index=None, 
+                 pads=[], plugs=[], settings={}, category="all"):
+        TElement.__init__(self, name, label, parent, index, pads=pads)
         self.pads = pads                    # (list of TPad) handling single-value connections
         self.plugs = plugs                  # (list of TPlug) handling multi-value connections
         self.settings = settings            # (dictionary) used for configuration and settings
         self.category = category            # (string?) used for distinguishing and grouping different types of widgets
 
+
     def add_plug(self, plug):
         """Adds a new plug to this widget."""
         if isinstance(plug, TPlug):
+            plug.welcome(self, self.plugs)
             self.plugs.append(plug)
+
 
 
 #----------------------------------------------------------------------------
 class THardware(Thread, TIoFlowObject):
     """This entity splits hardware devices into their elements."""
-    def __init__(self, name="hardware", label="Hardware"):
+    
+    _instances = 0
+    
+    def __init__(self, name="hardware", label="Hardware", 
+                 parent=None, index=None):
         Thread.__init__(self)
-        TIoFlowObject.__init__(self, name, label)
+        TIoFlowObject.__init__(self, name, label, parent, index)
         
         self.elements = []                      # (list of TElement) elements gear consists of
         self.groups = []                        # (list of TGroup) Grouping elements for massive assignments and/or better overview of elements
@@ -534,33 +675,53 @@ class THardware(Thread, TIoFlowObject):
         self.plugs = []                         # (list of TPlug)
         
         
-    # TODO: remove add_button/add_fader and use generic "add_element(type)" function.
-    #       in order to preserve upwards compatibility with future elements.
-    def add_button(self, label="Button", value=0):
-        """Create a new button element and add it to this hardware."""
-        button = TButton("%s.button" % self.name, label, value)
-        self.elements.append(button)
-        return button
-    
-    def add_fader(self, label="Fader", value=0, min=0, max=100, calibrate=False, precision=2):
-        """Create a new fader element and add it to this hardware."""
-        fader = TFader("%s.fader" % self.name, label=label, value=value, 
-                       min=min, max=max, calibrate=calibrate, precision=precision)
-        self.elements.append(fader)
-        return fader
+    def add_element(self, element):
+        """Assign element to hardware and create corresponding lists."""
+        if not(isinstance(element, TElement)):
+            log.warn("non-element passed to '%s.add_element()'." % self.get_name())
+            return None
+        else:
+            elements = self.get_elements_by_type(element.__class__, create=True)
+            element.welcome(self, elements)
+            
+            elements.append(element)
+            self.elements.append(element)
+            return element
         
+        
+    def add_elements(self, elements):
+        """Assign multiple elements to hardware."""
+        for element in elements:
+            self.add_element(element)
 
-    def get_elements_by_type(self):
+
+    def get_elements_by_type(self, type, create=False):
         """(list of TElement) returns an list of elements of a given type (e.g. TButton)."""
-        pass
+        classname = type.__name__.lower()
+        try:
+            elements = getattr(self, classname)
+        except:
+            if not(create):
+                log.info("No elements of type %s in %s." \
+                          % (classname, self.get_name()))
+                elements = None
+            else:
+                log.info("First element of type %s in %s." \
+                          % (classname, self.get_name()))
+                setattr(self, classname, [])           # initialize this attribute.
+                elements = getattr(self, classname)    # and try again.
+        return elements
+
 
     def get_elements_by_group(self): 
         """(list of TElement) returns elements within a given group."""
         pass
 
+
     def get_all_groups(self):
         """(list of TGroup) returns all groups."""
         pass
+
 
     def get_all_elements(self):
         """(list of TElement) returns all elements regardless of their type."""
@@ -571,8 +732,6 @@ class THardware(Thread, TIoFlowObject):
 #---------------------------------------------------
 def _test_classes():
     print "hello world"
-    logging.basicConfig(level=logging.DEBUG)
-    
 
 
 if __name__ == "__main__":
