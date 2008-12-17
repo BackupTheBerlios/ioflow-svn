@@ -38,7 +38,7 @@ class IOF_WdMidi(ioflow.TWidget):
         self._midi_out = pypm.Output(self.device_out, 20)
         
         self.add_pad(ioflow.TPad(label="Midi Note", value=0, 
-                                 flow="in", min=30, max=50,
+                                 flow="in", min=0, max=127,
                                  listener=self.play_note))
         
     def __dealloc__(self):
@@ -126,8 +126,8 @@ class IOF_HwMouse(ioflow.THardware):
         gate1 = ioflow.TGate(name="filter_gate", label="X-gate", min=100, type="lowpass")
         gate2 = ioflow.TGate(name="filter_gate", label="Y-gate", min=100, max=200, type="midpass")
         
-        # self.tfader[self.X_AXIS].insert_filter(gate1)
-        # self.tfader[self.Y_AXIS].insert_filter(gate2)
+        self.tfader[self.X_AXIS].insert_filter(gate1)
+        self.tfader[self.Y_AXIS].insert_filter(gate2)
         
         self.start()    # run itself as a thread.
         
@@ -192,10 +192,10 @@ def _test_classes():
     iof_wd_radio = IOF_WdRadioBtnGroup(min=0, max=100)
     iof_wd_midi = IOF_WdMidi(device_out=4, channel_out=1)
     
-    # FIXME: why does "iof_wd_midi.pads" contain pads of "iof_wd_radio" ???
-    # pointers fucked?
-    #iof_wd_midi.pads[1].connect(iof_hw_mouse.tbutton[0].pads[0])
-    iof_wd_radio.pads[0].connect(iof_wd_midi.pads[1])
+    iof_wd_radio.pads[0].connect(iof_wd_midi.pads[0])
+    iof_wd_midi.pads[0].connect(iof_hw_mouse.tfader[0].pads[0])
+    iof_wd_midi.pads[0].connect(iof_hw_mouse.tfader[1].pads[0])
+    #iof_wd_midi.pads[0].connect(iof_hw_mouse.tbutton[0].pads[0])
     
     mouse_btns = ioflow.TPlug(name="mouse_buttons", label="Mouse buttons")
     # fill plug with pads:

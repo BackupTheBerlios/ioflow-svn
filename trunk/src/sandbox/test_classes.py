@@ -17,7 +17,7 @@
 """
 
 """ioflow class implementation draft."""
-__version__ = '0.13 - december 16th, 2008 - 22:30'
+__version__ = '0.14 - december 17th, 2008 - 11:00'
 __author__ = 'Peter Bubestinger (pb@das-werkstatt.com)'
 
 import logging
@@ -185,11 +185,15 @@ class TPad(Thread, TIoFlowObject):
     def __init__(self, value, name="pad", label="Pad", 
                  parent=None, index=None, 
                  offset=0, 
-                 connects=[], flow="out", type="numeric",
+                 connects=None, flow="out", type="numeric",
                  keepalive=0, ramping=0, calibrate=False,
-                 filters=[], min=0, max=100, precision=2, listener=None):
+                 filters=None, min=0, max=100, precision=2, listener=None):
         TIoFlowObject.__init__(self, name, label, parent, index)
         Thread.__init__(self, name=name)
+        
+        # initialize list and dict arguments:
+        if connects == None: connects = []
+        if filters == None: filters = []
         
         self.value = value                      # (variant) current value of data in pad
         self.offset = offset                    # (numeric) +/- offset to add to the value before sending
@@ -251,18 +255,18 @@ class TPad(Thread, TIoFlowObject):
 
     def update_connects(self):
         """Resets and fills local input/outputs lists based on flow of connected pads."""
-        self.inputs = []                        # (list of TPad) connections to listen to.
-        self.outputs= []                        # (list of TPad) connections to send to.
+        self.inputs  = []                       # (list of TPad) connections to listen to.
+        self.outputs = []                       # (list of TPad) connections to send to.
         
         if len(self.connects) > 0:
-            log.debug("connections of %s:" % self.get_name())
+            log.debug("connections of %s:" % self.get_name(level=5))
             
         for pad in self.connects:
             if pad.flow in ["in", "duplex"]:
-                log.debug("output %s (%s)" % (pad.label, pad.name))
+                log.debug(" < output %s (%s)" % (pad.label, pad.name))
                 self.outputs.append(pad)
             elif pad.flow in ["out", "duplex"]:
-                log.debug("input %s (%s)" % (pad.label, pad.name))
+                log.debug(" > input %s (%s)" % (pad.label, pad.name))
                 self.inputs.append(pad)
                 
     def connect(self, pad):
@@ -278,8 +282,9 @@ class TPad(Thread, TIoFlowObject):
                 return False
             else:
                 self.connects.append(pad)
-                pad.connects.append(self)
                 self.update_connects()
+                pad.connects.append(self)
+                pad.update_connects()
                 return True
         
     
@@ -328,8 +333,17 @@ class TPad(Thread, TIoFlowObject):
         if (value != None):
             # - range conversion:
             if (in_min != None) and (in_max != None):
-                factor = float(self.max - self.min) / float(in_max - in_min)
-                value = (value - in_min) * factor + self.min
+                try:
+                    factor = float(self.max - self.min) / float(in_max - in_min)
+                except ZeroDivisionError:
+                    log.info("convert: Division by Zero. %d %d %d %d", self.max, self.min, in_max, in_min)
+                    factor = float(0)
+                except:
+                    log.error("Conversion error in %s:",
+                                self.get_name(level=5), exc_info=True)
+                    
+                else:
+                    value = (value - in_min) * factor + self.min
             else:
                 # We can only call calibration if there is *no* range given:
                 if self.calibrate: 
@@ -391,13 +405,16 @@ class TPlug(TIoFlowObject):
     """
     def __init__(self, name="plug", label="Plug", 
                  parent=None, index=None, 
-                 connects=[], pads=[], 
+                 connects=None, pads=None, 
                  listener=None):
         TIoFlowObject.__init__(self, name, label, parent, index)
         
         self.active_pads = 0         # (int) number of pads connected.
         
-        self.connects = []           # (list of TPlug) sockets this is plug is connected to.
+        if connects == None: connects = []
+        if pads == None: pads = []
+        
+        self.connects = []           # (list of TPlug) sockets this is plug is connected to.    
         for plug in connects:
             self.connect(plug)
         
@@ -469,8 +486,11 @@ class TPlug(TIoFlowObject):
 class TGroup(TIoFlowObject):
     """Grouping ioflow objects to have a common handle."""
     def __init__(self, name, label, 
-                 parent=None, index=None, contents=[]):
+                 parent=None, index=None, contents=None):
         TIoFlowObject.__init__(self, name, label, parent, index)
+        
+        # initialize list and dict arguments:
+        if contents == None: contents = []
         self.contents = contents           # could be any type: element, widget, pad, ...
 
 
@@ -485,8 +505,10 @@ class TElement(TIoFlowObject):
 
     """
     def __init__ (self, name=None, label=None, 
-                  parent=None, index=None, pads=[]):
+                  parent=None, index=None, pads=None):
         TIoFlowObject.__init__(self, name, label, parent, index)
+        # initialize list and dict arguments:
+        if pads == None: pads = []
         self.pads = pads               # (list of TPad) type "in/out" is defined by pads
     
     
@@ -642,9 +664,13 @@ class TWidget(TElement):
     # TODO: Find a way for handling categories to avoid wild growth. e.g. dictionary?
     def __init__(self, name="widget", label="Widget", 
                  parent=None, index=None, 
-                 pads=[], plugs=[], settings={}, category="all"):
+                 pads=None, plugs=None, settings=None, category="all"):
+        # initialize list and dict arguments:
+        if pads == None: pads = []
+        if plugs == None: plugs = []
+        if settings == None: settings = {}
+            
         TElement.__init__(self, name, label, parent, index, pads=pads)
-        self.pads = pads                    # (list of TPad) handling single-value connections
         self.plugs = plugs                  # (list of TPlug) handling multi-value connections
         self.settings = settings            # (dictionary) used for configuration and settings
         self.category = category            # (string?) used for distinguishing and grouping different types of widgets
